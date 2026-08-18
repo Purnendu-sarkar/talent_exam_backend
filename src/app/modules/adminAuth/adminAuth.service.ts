@@ -1,114 +1,64 @@
-import { PrismaClient, Role, Status } from '@prisma/client';
-import crypto from 'crypto';
-import bcrypt from 'bcryptjs';
+import { Role, Status, OtpPurpose } from '@prisma/client';
 import ApiError from '../../errors/ApiError';
 import httpStatus from 'http-status';
 import { jwtHelper } from '../../utils/jwtHelper';
 import config from '../../../config';
-
 import prisma from '../../../shared/prisma';
+import { sendOtp as sendOtpService, verifyOtp as verifyOtpService } from '../otp/otp.service';
+import { normalizeEmail } from '../../utils/email.utils';
 
 const sendOtp = async (email: string) => {
+  const normalizedEmail = normalizeEmail(email);
+
   // 1. Check if user exists and is Admin/SuperAdmin
   const adminUser = await prisma.user.findUnique({
-    where: { email },
+    where: { email: normalizedEmail },
   });
 
-  if (!adminUser) {
-    throw new ApiError(httpStatus.NOT_FOUND, 'Admin account not found');
-  }
-
-  if (adminUser.role !== Role.ADMIN && adminUser.role !== Role.SUPER_ADMIN) {
-    throw new ApiError(httpStatus.FORBIDDEN, 'Unauthorized access to admin portal');
+  if (!adminUser || (adminUser.role !== Role.ADMIN && adminUser.role !== Role.SUPER_ADMIN)) {
+    // Anti-enumeration: Do not reveal that the account does not exist or isn't an admin.
+    console.warn(`[ANTI-ENUMERATION] Blocked admin OTP request for non-admin email: ${normalizedEmail}`);
+    return null; // Pretend it succeeded
   }
 
   if (adminUser.status !== Status.ACTIVE) {
-    throw new ApiError(httpStatus.FORBIDDEN, `Admin account is ${adminUser.status.toLowerCase()}`);
+    // We can be ambiguous here as well, or just log it.
+    console.warn(`[ANTI-ENUMERATION] Blocked admin OTP request for inactive admin: ${normalizedEmail}`);
+    return null; 
   }
 
-  // 2. Generate 6-digit OTP
-  const otp = crypto.randomInt(100000, 999999).toString();
-  
-  // 3. Hash OTP
-  const otpHash = await bcrypt.hash(otp, 12);
-  
-  // 4. Expiration time
-  const expiresAt = new Date(Date.now() + config.otp.expiration_minutes * 60 * 1000);
-
-  // 5. Invalidate previous OTPs
-  await prisma.otp.updateMany({
-    where: { email, isUsed: false },
-    data: { isUsed: true },
-  });
-
-  // 6. Store OTP
-  await prisma.otp.create({
-    data: {
-      email,
-      otpHash,
-      expiresAt,
-    },
-  });
-
-  // 7. Mock Email Sending
-  console.log(`\n🛡️ [MOCK ADMIN EMAIL] OTP for ${email} is: ${otp}\n`);
+  // Delegate to OTP service
+  await sendOtpService(normalizedEmail, OtpPurpose.ADMIN_LOGIN);
 
   return null;
 };
 
 const verifyOtp = async (email: string, otp: string) => {
+  const normalizedEmail = normalizeEmail(email);
+
   // 1. Find user and verify role
   const adminUser = await prisma.user.findUnique({
-    where: { email },
+    where: { email: normalizedEmail },
   });
 
   if (!adminUser || (adminUser.role !== Role.ADMIN && adminUser.role !== Role.SUPER_ADMIN)) {
-    throw new ApiError(httpStatus.FORBIDDEN, 'Unauthorized access');
+    throw new ApiError(httpStatus.UNAUTHORIZED, 'Invalid email or OTP');
   }
 
   if (adminUser.status !== Status.ACTIVE) {
-    throw new ApiError(httpStatus.FORBIDDEN, `Admin account is ${adminUser.status.toLowerCase()}`);
+    throw new ApiError(httpStatus.UNAUTHORIZED, 'Invalid email or OTP');
   }
 
-  // 2. Find latest unused OTP
-  const otpRecord = await prisma.otp.findFirst({
-    where: {
-      email,
-      isUsed: false,
-      expiresAt: {
-        gt: new Date(),
-      },
-    },
-    orderBy: {
-      createdAt: 'desc',
-    },
-  });
-
-  if (!otpRecord) {
-    throw new ApiError(httpStatus.BAD_REQUEST, 'Invalid or expired OTP');
+  // 2. Delegate to OTP service
+  try {
+    await verifyOtpService(normalizedEmail, otp, OtpPurpose.ADMIN_LOGIN);
+  } catch (error) {
+    // Mask specific OTP errors to prevent enumeration if necessary, 
+    // or just pass through standard OTP errors (e.g. Invalid OTP)
+    throw error;
   }
 
-  if (otpRecord.attempts >= config.otp.max_attempts) {
-    throw new ApiError(httpStatus.TOO_MANY_REQUESTS, 'Maximum OTP attempts reached');
-  }
-
-  // 3. Verify OTP hash
-  const isValid = await bcrypt.compare(otp, otpRecord.otpHash);
-  if (!isValid) {
-    await prisma.otp.update({
-      where: { id: otpRecord.id },
-      data: { attempts: { increment: 1 } },
-    });
-    throw new ApiError(httpStatus.BAD_REQUEST, 'Invalid OTP');
-  }
-
-  // 4. Mark OTP as used
-  await prisma.otp.update({
-    where: { id: otpRecord.id },
-    data: { isUsed: true },
-  });
-
-  // 5. Generate Token
+  // 3. Generate Token
   const jwtPayload = {
     userId: adminUser.id,
     email: adminUser.email,

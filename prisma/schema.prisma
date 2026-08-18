@@ -38,15 +38,22 @@ model User {
   @@map("users")
 }
 
+enum OtpPurpose {
+  USER_LOGIN
+  ADMIN_LOGIN
+}
+
 model Otp {
-  id        String   @id @default(uuid())
+  id        String     @id @default(uuid())
   email     String
   otpHash   String
+  purpose   OtpPurpose
   expiresAt DateTime
-  isUsed    Boolean  @default(false)
-  attempts  Int      @default(0)
-  createdAt DateTime @default(now())
+  isUsed    Boolean    @default(false)
+  attempts  Int        @default(0)
+  createdAt DateTime   @default(now())
 
-  @@index([email])
+  @@index([email, purpose])
+  @@index([expiresAt])
   @@map("otps")
 }
