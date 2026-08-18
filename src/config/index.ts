@@ -3,7 +3,7 @@ import path from 'path';
 
 dotenv.config({ path: path.join(process.cwd(), '.env') });
 
-export default {
+const config = {
   env: process.env.NODE_ENV || 'development',
   port: parseInt(process.env.PORT || '5000', 10),
   database_url: process.env.DATABASE_URL as string,
@@ -25,4 +25,15 @@ export default {
     from: process.env.EMAIL_FROM || 'no-reply@talentexam.in',
   },
   client_url: process.env.CLIENT_URL || 'http://localhost:3000',
+  super_admin: {
+    email: process.env.SUPER_ADMIN_EMAIL as string,
+    name: process.env.SUPER_ADMIN_NAME || 'Super Admin',
+  }
 };
+
+// Validate critical configurations
+if (!config.super_admin.email) {
+  throw new Error('❌ FATAL ERROR: SUPER_ADMIN_EMAIL is not defined in environment variables.');
+}
+
+export default config;

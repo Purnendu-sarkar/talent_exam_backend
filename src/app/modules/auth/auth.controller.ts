@@ -1,22 +1,28 @@
 import { Request, Response } from 'express';
 import { catchAsync } from '../../utils/catchAsync';
 import { sendResponse } from '../../utils/sendResponse';
+import { AuthService } from './auth.service';
+import httpStatus from 'http-status';
 
 const sendOtp = catchAsync(async (req: Request, res: Response) => {
-  // TODO: Implement send OTP logic
+  const { email } = req.body;
+  await AuthService.sendOtp(email);
+
   sendResponse(res, {
-    statusCode: 200,
+    statusCode: httpStatus.OK,
     success: true,
-    message: 'OTP sent successfully',
+    message: 'OTP sent successfully to email',
   });
 });
 
 const verifyOtp = catchAsync(async (req: Request, res: Response) => {
-  // TODO: Implement verify OTP logic
-  sendResponse(res, {
-    statusCode: 200,
-    success: true,
-    message: 'OTP verified successfully',
+  const { email, otp } = req.body;
+  const result = await AuthService.verifyOtp(email, otp);
+
+  // Strictly returning only token and message
+  res.status(httpStatus.OK).json({
+    message: 'Login successful',
+    token: result.token,
   });
 });
 

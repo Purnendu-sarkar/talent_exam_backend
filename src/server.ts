@@ -1,9 +1,9 @@
 import { Server } from 'http';
 import app from './app';
 import config from './config';
-import { PrismaClient } from '@prisma/client';
+import prisma from './shared/prisma';
+import { ensureSuperAdmin } from './app/utils/manageSuperAdmin';
 
-const prisma = new PrismaClient();
 let server: Server;
 
 async function bootstrap() {
@@ -11,6 +11,9 @@ async function bootstrap() {
     // Validate database connection
     await prisma.$connect();
     console.log('🗄️  Database connection established successfully');
+
+    // Ensure Super Admin exists before starting server
+    await ensureSuperAdmin();
 
     server = app.listen(config.port, () => {
       console.log(`🚀 Application is running on port ${config.port}`);
